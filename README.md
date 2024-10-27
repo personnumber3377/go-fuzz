@@ -1,5 +1,16 @@
 # go-fuzz: randomized testing for Go
 
+
+
+# !!!!!!!!!!!!!!!!   NOTE   !!!!!!!!!!!!!!!!
+
+This fork of go-fuzz implements custom python mutators for go-fuzz libfuzzer mode and is basically a (very hacky) solution to https://github.com/dvyukov/go-fuzz/issues/319 . Please feel free to add a pull request or an issue etc etc if you find a bug. You can find (some quite poorly written) instructions on how to actually use this at: https://personnumber3377.github.io/projects/implementing_python_mutators_for_go_fuzz.html which is my blog post. Please read it carefully before filing an issue!
+
+# ==========================================
+
+
+
+
 Go-fuzz is a coverage-guided [fuzzing solution](http://en.wikipedia.org/wiki/Fuzz_testing) for testing of Go packages.
 Fuzzing is mainly applicable to packages that parse complex inputs (both text
 and binary), and is especially useful for hardening of systems that parse inputs
