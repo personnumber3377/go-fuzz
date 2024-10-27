@@ -288,7 +288,7 @@ func (c *Context) loadPkg(pkg string) {
 	// This also provides better error messages in the case
 	// of invalid code than trying to compile instrumented code.
 	cfg := basePackagesConfig()
-	cfg.Mode = packages.LoadAllSyntax | packages.NeedEmbedFiles | packages.NeedModule
+	cfg.Mode = packages.LoadAllSyntax
 	cfg.BuildFlags = []string{"-tags", makeTags()}
 	// use custom ParseFile in order to get comments
 	cfg.ParseFile = func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
@@ -652,6 +652,22 @@ func (c *Context) clonePackage(p *packages.Package) {
 	newDir := filepath.Join(c.workdir, root, "src", p.PkgPath)
 	c.mkdirAll(newDir)
 
+	// examine "go:embed" directives, collect embedded filenames, use later
+	for i, fullName := range p.CompiledGoFiles {
+		if strings.HasSuffix(fullName, ".go") {
+			for _, commentGroup := range trimComments(p.Syntax[i], p.Fset) {
+				for _, comment := range commentGroup.List {
+					if strings.HasPrefix(comment.Text, "//go:embed") {
+						filename := comment.Text[len("//go:embed "):]
+						dirname := filepath.Dir(fullName)
+						fullname := fmt.Sprintf("%s/%s", dirname, filename)
+						p.OtherFiles = append(p.OtherFiles, fullname)
+					}
+				}
+			}
+		}
+	}
+
 	if p.PkgPath == "unsafe" {
 		// Write a dummy file. go/packages explicitly returns an empty GoFiles for it,
 		// for reasons that are unclear, but cmd/go wants there to be a Go file in the package.
@@ -670,29 +686,6 @@ func (c *Context) clonePackage(p *packages.Package) {
 	}
 	for _, f := range p.OtherFiles {
 		dst := filepath.Join(newDir, filepath.Base(f))
-		c.copyFile(f, dst)
-	}
-	var pkgRoot string
-	if p.Module != nil {
-		pkgRel, err := filepath.Rel(p.Module.Path, p.PkgPath)
-		if err != nil {
-			c.failf("clonePackage: filepath.Rel(%q, %q): %v\n", p.Module.Path, p.PkgPath, err)
-		}
-		pkgRoot = filepath.Join(p.Module.Dir, pkgRel)
-	}
-	for _, f := range p.EmbedFiles {
-		dst := filepath.Join(newDir, filepath.Base(f))
-		if pkgRoot != "" {
-			relPath, err := filepath.Rel(pkgRoot, f)
-			if err != nil {
-				c.failf("clonePackage: filepath.Rel(%q, %q): %v\n", pkgRoot, f, err)
-			}
-			dst = filepath.Join(newDir, relPath)
-		}
-		err := os.MkdirAll(filepath.Dir(dst), 0o700)
-		if err != nil {
-			c.failf("clonePackage: MkdirAll %q: %v\n", filepath.Dir(dst), err)
-		}
 		c.copyFile(f, dst)
 	}
 
@@ -787,7 +780,7 @@ func (c *Context) copyDir(dir, newDir string) {
 func (c *Context) copyFile(src, dst string) {
 	r, err := os.Open(src)
 	if err != nil {
-		c.failf("copyFile: could not read %v: %v", src, err)
+		c.failf("copyFile: could not read %v", src, err)
 	}
 	w, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o700)
 	if err != nil {
@@ -869,6 +862,10 @@ func main() {
 }
 `))
 
+// Originally the cgo flags was like this: "// #cgo CFLAGS: -Wall -Werror LDFLAGS: -lpython3.10"
+
+// CFLAGS: -Wall -Werror -I/usr/include/python3.10/ 
+
 var mainSrcLibFuzzer = template.Must(template.New("main").Parse(`
 package main
 
@@ -879,17 +876,20 @@ import (
 	dep "go-fuzz-dep"
 )
 
-// #cgo CFLAGS: -Wall -Werror
+// #cgo LDFLAGS: -l python3.10
+// #cgo CFLAGS: -I/usr/include/python3.10/ -I/home/oof/gitaly/
 // #ifdef __linux__
 // __attribute__((weak, section("__libfuzzer_extra_counters")))
 // #else
 // #error Currently only Linux is supported
 // #endif
 // unsigned char GoFuzzCoverageCounters[65536];
+// #include "harness.h"
 import "C"
 
 //export LLVMFuzzerInitialize
 func LLVMFuzzerInitialize(argc uintptr, argv uintptr) int {
+	C.LLVMFuzzerInitPythonModule()
 	dep.Initialize(unsafe.Pointer(&C.GoFuzzCoverageCounters[0]), 65536)
 	return 0
 }
